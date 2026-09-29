@@ -1,0 +1,248 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+
+% ---------- Style du code ----------
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{codeblue}{rgb}{0.13,0.29,0.53}
+\definecolor{codegreen}{rgb}{0.0,0.5,0.0}
+\lstset{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  keywordstyle=\color{codeblue}\bfseries,
+  commentstyle=\color{codegreen},
+  frame=single,
+  showstringspaces=false
+}
+
+% ---------- Page de titre : A COMPLETER ----------
+\title{\textbf{ULK POLYTECHNIC INSTITUTE}\\
+       \Large Cryptography \& Network Security (ETTCS801)\\
+       \large Integrated Situation -- Final Technical Report}
+\author{\textbf{Student name:} Romy \\
+        \textbf{Student ID:} \dots\dots\dots\dots \\
+        \textbf{Module Code:} ETTCS801 \\
+        \textbf{Lecturer:} Isaac TUMWINE}
+\date{\today}
+
+\begin{document}
+\maketitle
+\hrule
+\vspace{0.5cm}
+
+% =====================================================
+\section{Introduction \& Project Overview}
+This report presents the security assessment, implementation, and traffic
+filtering configuration carried out for the institute's infrastructure.
+To address weak passwords, unencrypted data transfers, outdated software
+and unauthorized network access, a three-tier defense strategy was applied:
+
+\begin{enumerate}
+  \item A formal risk assessment prioritizing critical assets and vulnerabilities.
+  \item A Python security toolkit implementing symmetric encryption (AES via
+        Fernet) and SHA-256 hashing for integrity verification.
+  \item Host-based packet filtering with \texttt{iptables} on Linux to restrict
+        server access according to network subnets.
+\end{enumerate}
+
+% =====================================================
+\section{Risk Assessment}
+
+\subsection{Asset and Vulnerability Identification}
+\begin{itemize}
+  \item \textbf{Asset 1: Student records (database/files)}
+  \begin{itemize}
+    \item \textit{Vulnerability:} unencrypted storage and unencrypted transfers between campuses.
+    \item \textit{Consequence:} interception, tampering or exposure of grades and personal data.
+  \end{itemize}
+  \item \textbf{Asset 2: Central server}
+  \begin{itemize}
+    \item \textit{Vulnerability:} Guest network can reach the server without firewall isolation.
+    \item \textit{Consequence:} network discovery, lateral movement or DoS from untrusted networks.
+  \end{itemize}
+  \item \textbf{Asset 3: Administrator / staff accounts}
+  \begin{itemize}
+    \item \textit{Vulnerability:} weak passwords and outdated software.
+    \item \textit{Consequence:} brute-forcing, administrative compromise, privilege escalation.
+  \end{itemize}
+\end{itemize}
+
+\subsection{Risk Evaluation and Ranking}
+\begin{table}[h!]
+  \centering
+  \begin{tabular}{@{}llll@{}}
+    \toprule
+    \textbf{Risk} & \textbf{Likelihood} & \textbf{Impact} & \textbf{Priority} \\
+    \midrule
+    Unencrypted file storage \& transfer      & High   & High   & Critical (Rank 1) \\
+    Guest network access to central server    & High   & Medium & High (Rank 2) \\
+    Weak passwords \& outdated software       & Medium & High   & Medium (Rank 3) \\
+    \bottomrule
+  \end{tabular}
+  \caption{Risk ranking matrix}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Rank 1:} student records travel unencrypted over shared links;
+        interception causes loss of confidentiality and reputational damage.
+  \item \textbf{Rank 2:} Guest devices can scan and probe open server ports
+        because no boundary firewall separates them.
+  \item \textbf{Rank 3:} the impact is severe, but exploitation requires active
+        reconnaissance or brute force, so it is less immediate than open
+        routes and cleartext transfers.
+\end{itemize}
+
+\subsection{Recommended Security Controls}
+\begin{enumerate}
+  \item \textbf{Data security:} symmetric encryption (AES) for stored records
+        and HTTPS/SFTP for all cross-campus transfers.
+  \item \textbf{Network filtering:} \texttt{iptables} rules dropping traffic
+        from the Guest subnet (\texttt{192.168.20.0/24}).
+  \item \textbf{Access control:} strong password policy, multi-factor
+        authentication where possible, and regular patching.
+\end{enumerate}
+
+% =====================================================
+\section{Encryption and Integrity Application}
+
+\subsection{Implementation Overview}
+The utility \texttt{security\_toolkit.py} offers command-line encryption,
+decryption, hashing and integrity verification using the \texttt{cryptography}
+library and the Python standard library:
+
+\begin{itemize}
+  \item \textbf{Symmetric encryption:} Fernet (AES-128 in CBC mode with HMAC authentication).
+  \item \textbf{Integrity hashing:} \texttt{hashlib.sha256()} produces a 256-bit
+        digest before and after transfer.
+  \item \textbf{Error handling:} missing files and invalid or corrupted
+        ciphertexts are caught to avoid crashes.
+\end{itemize}
+
+\subsection{Usage}
+\begin{lstlisting}[language=bash]
+python3 security_toolkit.py --encrypt  FILE
+python3 security_toolkit.py --decrypt  FILE.enc
+python3 security_toolkit.py --hash     FILE
+python3 security_toolkit.py --verify   FILE EXPECTED_SHA256
+\end{lstlisting}
+
+\subsection{Source Code (main functions)}
+\begin{lstlisting}[language=Python]
+import hashlib, os, sys
+from cryptography.fernet import Fernet
+
+KEY_FILE = "secret.key"
+
+def generate_or_load_key():
+    """Generate a Fernet key or load the existing one."""
+    if not os.path.exists(KEY_FILE):
+        key = Fernet.generate_key()
+        with open(KEY_FILE, "wb") as kf:
+            kf.write(key)
+    else:
+        with open(KEY_FILE, "rb") as kf:
+            key = kf.read()
+    return key
+
+def calculate_sha256(file_path):
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(block)
+    return sha256_hash.hexdigest()
+
+def encrypt_file(file_path):
+    fernet = Fernet(generate_or_load_key())
+    with open(file_path, "rb") as f:
+        data = f.read()
+    with open(file_path + ".enc", "wb") as f:
+        f.write(fernet.encrypt(data))
+
+def decrypt_file(file_path):
+    fernet = Fernet(generate_or_load_key())
+    with open(file_path, "rb") as f:
+        encrypted = f.read()
+    try:
+        return fernet.decrypt(encrypted)
+    except Exception as e:
+        print(f"[!] Decryption failed: {e}")
+        sys.exit(1)
+\end{lstlisting}
+
+\subsection{Test Evidence: Encryption, Decryption and Tamper Detection}
+Paste below the \emph{real} output of your terminal after running the
+commands above on a sample file.
+
+\begin{lstlisting}
+$ python3 security_toolkit.py --encrypt sample_student_record.txt
+<< paste your real output here >>
+
+$ python3 security_toolkit.py --decrypt sample_student_record.txt.enc
+<< paste your real output here >>
+
+$ python3 security_toolkit.py --verify tampered_student_record.txt <hash>
+<< paste your real output here >>
+\end{lstlisting}
+
+% =====================================================
+\section{Network Traffic Filtering Configuration \& Testing}
+
+\subsection{Firewall Rule Architecture}
+The central server (\texttt{192.168.10.100}) uses a default-deny ingress
+policy: Staff traffic (\texttt{192.168.10.0/24}) is allowed on port 80 only,
+Guest traffic (\texttt{192.168.20.0/24}) is dropped, and everything else is blocked.
+
+\begin{lstlisting}[language=bash]
+sudo iptables -F
+sudo iptables -P INPUT DROP
+sudo iptables -P FORWARD DROP
+sudo iptables -A INPUT -i lo -j ACCEPT
+sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -A INPUT -s 192.168.20.0/24 -j DROP
+sudo iptables -A INPUT -s 192.168.10.0/24 -p tcp --dport 80 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 80 -j DROP
+\end{lstlisting}
+
+\subsection{Test Execution}
+Tests were run with \texttt{netcat} (one permitted connection, two blocked).
+
+\begin{table}[h!]
+  \centering
+  \small
+  \begin{tabular}{@{}p{3.2cm}p{5.6cm}p{5.2cm}@{}}
+    \toprule
+    \textbf{Test} & \textbf{Command} & \textbf{Result} \\
+    \midrule
+    1. Staff, port 80 (permitted) &
+      \texttt{nc -zv -s 192.168.10.15 192.168.10.100 80} &
+      Connection succeeded -- \textbf{PASS} \\
+    2. Guest subnet (blocked) &
+      \texttt{nc -zv -w 3 -s 192.168.20.45 192.168.10.100 80} &
+      Timed out (silent drop) -- \textbf{PASS} \\
+    3. Staff, port 22 (blocked) &
+      \texttt{nc -zv -w 3 -s 192.168.10.15 192.168.10.100 22} &
+      Timed out (default DROP) -- \textbf{PASS} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Firewall test results}
+\end{table}
+
+% =====================================================
+\section{Conclusion}
+The measures address the vulnerabilities found in the risk assessment. Data at
+rest and in transit are protected by symmetric encryption and SHA-256 integrity
+checks, while the \texttt{iptables} policy isolates the central server from the
+Guest subnet and from unauthorized service ports.
+
+\vspace{0.5cm}
+\noindent\textbf{GitHub repository:} \\
+\url{https://github.com/Romuald-Mw/named-cryptography-network-security-exam.}
+
+\end{document}
